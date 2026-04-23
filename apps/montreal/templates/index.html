@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GraphRAG: Montreal Gangs Network Analysis</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* =========================
+           Global visual parameters
+           ========================= */
+        :root {
+            --legend-alpha: 0.7;   /* 범례 색상 투명도 (0~1) */
+        }
+        /* 논문용 이미지 캡처를 위해 배경을 조금 더 밝고 깔끔하게 조정 */
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #eceff1; height: 100%; margin: 0; overflow: hidden; }        
+        /* 메인 컨테이너: 상하 배치(column) */
+        .container { 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            padding: 15px; 
+            gap: 15px; 
+            box-sizing: border-box; 
+        }
+
+        .panel { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; overflow: hidden; }
+
+        /* 상단 패널: 그래프 시각화 (높이 60% 점유) */
+        .upper-panel { 
+            flex: 0 0 60%; 
+            position: relative; 
+            border: 1px solid #cfd8dc;
+        }
+
+        /* 하단 패널: 분석 및 입력 (나머지 공간) */
+        .lower-panel { 
+            flex: 0 0 40%; 
+            display: flex; 
+            flex-direction: row; /* 하단 내부는 좌우로 분할 */
+            gap: 15px;
+            overflow: hidden;  
+            padding-bottom: 10px; /* 스크롤 끝 여백 */
+            /*background: transparent; */
+            /*box-shadow: none; */
+        }
+
+        /* 하단-왼쪽: 입력창 */
+        .input-section {
+            flex: 0 0 350px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #cfd8dc;
+            display: flex;
+            flex-direction: column;
+            overflow: auto; /* 내부 스크롤 제거 */ 
+        }
+
+        /* 하단-오른쪽: AI 답변 결과창 */
+        .answer-section {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #cfd8dc;
+            overflow: auto;  /* 내부 스크롤 제거 */
+            min-height: 0;
+        }
+
+        h1 { color: #c0392b; margin: 0 0 10px 0; font-size: 20px; border-bottom: 2px solid #f4f4f4; padding-bottom: 8px; }
+        textarea { width: 100%; flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-family: inherit; resize: none; margin-bottom: 10px; }
+        button { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #e74c3c; }
+
+        #mynetwork { width: 100%; height: 100%; background: #fafafa; }
+        
+        /* 그래프 내 요소들 */
+        .legend {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1.5px solid #bdc3c7;
+            min-width: 150px;
+            z-index: 1000;
+        }
+
+        .legend strong {
+            display: block;
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #34495e;
+        }
+
+        .color-box {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 0, 0, 0.15);
+        }
+
+        /* ✅ 범례 색상 (노드와 동일한 의미 체계) */
+        .color-bloods {
+            background: rgba(255, 68, 68, var(--legend-alpha));
+        }
+
+        .color-crips {
+            background: rgba(68, 68, 255, var(--legend-alpha));
+        }
+
+        .color-others {
+            background: rgba(136, 136, 136, var(--legend-alpha));
+        }
+        /*.legend { position: absolute; top: 15px; right: 15px; background: rgba(255,255,255,0.9); padding: 16px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; z-index: 10; }
+        //.legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+        .color-box { width: 10px; height: 10px; border-radius: 50%; }
+        */
+
+        .node-info-panel { position: absolute; bottom: 15px; left: 15px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: none; z-index: 20; max-width: 200px; font-size: 12px; border-left: 4px solid #c0392b; }
+
+        #answer { font-size: 14px; line-height: 1.6; color: #263238; }
+        #debugInfo { margin-top: 10px; font-size: 11px; color: #78909c; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 상단: 그래프 영역 -->
+        <div class="upper-panel panel">
+            <div id="mynetwork"></div>
+            <div class="legend">
+                <strong>Network Legend</strong>
+
+                <div class="legend-item">
+                    <div class="color-box color-bloods"></div>
+                    Bloods
+                </div>
+
+                <div class="legend-item">
+                    <div class="color-box color-crips"></div>
+                    Crips
+                </div>
+
+                <div class="legend-item">
+                    <div class="color-box color-others"></div>
+                    Others
+                </div>
+                <!--
+                <strong>Network Legend</strong>
+                <div class="legend-item"><div class="color-box" style="background: #ff4444;"></div> Bloods</div>
+                <div class="legend-item"><div class="color-box" style="background: #4444ff;"></div> Crips</div>
+                <div class="legend-item"><div class="color-box" style="background: #888888;"></div> Others</div>
+                -->
+            </div>
+            <div class="node-info-panel" id="nodeInfoPanel">
+                <strong id="infoTitle"></strong>
+                <div id="infoContent"></div>
+            </div>
+        </div>
+
+        <!-- 하단: 분석 및 컨트롤 영역 -->
+        <div class="lower-panel">
+
+            <!-- 하단 좌측: 입력부 -->
+            <div class="input-section">
+                <h1>🔍 Query Input</h1>
+                <p style="font-size: 13px; color: #7f8c8d; margin-bottom: 10px;">
+                    GraphRAG 시스템에 네트워크 분석을 요청하세요.
+                </p>
+                <textarea id="question" placeholder="예: BMF의 주요 협력 관계를 분석해줘..."></textarea>
+                <button onclick="askQuestion()">GraphRAG 분석 실행</button>
+                <div id="debugInfo" style="display: none;">
+                    Matched Nodes: <span id="debugMatched"></span>
+                </div>
+            </div>
+
+            <!-- 하단 우측: 답변 출력부 -->
+            <div class="answer-section">
+                <h1>📄 Analysis Report</h1>
+
+                <!-- ✅ 스크롤 대상 -->
+                <div id="answer">
+                    질문을 입력하면 AI가 그래프 컨텍스트를 바탕으로 분석 보고서를 생성합니다.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let network = null;
+        let nodes = null;
+        let edges = null;
+        let allNodesData = [];
+
+        const USE_RGBA = true;
+
+        function getGangColor(aff, alpha = 0.7) {
+            if (!USE_RGBA) {
+                if (aff === 'Bloods') return '#ff4444';
+                if (aff === 'Crips') return '#4444ff';
+                return '#888888';
+            }
+
+           const colors = {
+                Bloods: [255, 68, 68],
+                Crips: [68, 68, 255],
+                Others: [136, 136, 136]
+            };
+
+            const c = colors[aff] || [236, 239, 241];
+            return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${alpha})`;
+        }
+
+        //function getGangColor(aff) {
+        //    if (aff === 'Bloods') return '#ff4444';
+        //    if (aff === 'Crips') return '#4444ff';
+        //    return '#888888';
+        //}
+
+        window.onload = async function() {
+            await initGraph();
+        };
+
+        async function initGraph() {
+            try {
+                const res = await fetch('/graph');
+                const data = await res.json();
+                allNodesData = data.nodes;
+
+                const visNodes = data.nodes.map(n => ({
+                    id: n.id,
+                    label: n.properties.name || n.id,
+                    color: { background: '#eceff1', border: '#b0bec5' },
+                    font: { color: '#546e7a', size: 12 },
+                    shape: 'dot',
+                    size: 15
+                }));
+
+                const visEdges = data.edges.map(e => ({
+                    id: e.id || (e.source + "-" + e.target),
+                    from: e.source,
+                    to: e.target,
+                    arrows: 'to',
+                    color: { color: '#cfd8dc', opacity: 0.4 },
+                    width: 1
+                }));
+
+                nodes = new vis.DataSet(visNodes);
+                edges = new vis.DataSet(visEdges);
+
+                const options = {
+                    physics: {
+                        enabled: true,
+                        barnesHut: { gravitationalConstant: -3000, springLength: 100 }
+                    },
+                    interaction: { hover: true }
+                };
+
+                network = new vis.Network(document.getElementById('mynetwork'), { nodes, edges }, options);
+                network.on('click', (p) => p.nodes[0] ? showInfo(p.nodes[0]) : closeInfo());
+            } catch (e) {
+                console.error("Graph loading failed:", e);
+            }
+        }
+
+        async function askQuestion() {
+            const question = document.getElementById('question').value;
+            const answerDiv = document.getElementById('answer');
+            if (!question) return;
+
+            answerDiv.innerHTML = "<p style='color:#7f8c8d;'>지식 그래프 탐색 및 추론 중...</p>";
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+                const data = await response.json();
+                answerDiv.innerHTML = marked.parse(data.answer);
+
+                if (data.used_nodes) {
+                    highlightGangs(data.used_nodes);
+                }
+            } catch (error) {
+                answerDiv.innerHTML = "오류가 발생했습니다.";
+            }
+        }
+
+        function highlightGangs(usedNodeIds) {
+            if (!nodes || !edges) return;
+
+            const allNodeIds = nodes.getIds();
+            const allEdgeIds = edges.getIds();
+            const matched = usedNodeIds.filter(id => allNodeIds.includes(id));
+
+            document.getElementById('debugInfo').style.display = 'block';
+            document.getElementById('debugMatched').innerText = matched.length + " objects";
+
+            // 노드 강조
+            const nodeUpdates = allNodeIds.map(id => {
+                const isUsed = matched.includes(id);
+                const rawNode = allNodesData.find(n => n.id === id);
+                const gColor = getGangColor(rawNode?.properties?.affiliation);
+                return {
+                    id: id,
+                    opacity: isUsed ? 1 : 0.1,
+                    size: isUsed ? 35 : 15,
+                    color: isUsed ? { background: gColor, border: '#263238' } : { background: '#eceff1', border: '#b0bec5' },
+                    font: { size: isUsed ? 16 : 10, color: isUsed ? '#000' : '#b0bec5' }
+                };
+            });
+            nodes.update(nodeUpdates);
+
+            // 엣지 강조
+            const edgeUpdates = allEdgeIds.map(id => {
+                const edge = edges.get(id);
+                const isHighlighted = matched.includes(edge.from) && matched.includes(edge.to);
+                return {
+                    id: id,
+                    color: { color: isHighlighted ? '#e74c3c' : '#cfd8dc', opacity: isHighlighted ? 1 : 0.1 },
+                    width: isHighlighted ? 4 : 1
+                };
+            });
+            edges.update(edgeUpdates);
+
+            if (matched.length > 0) {
+                network.fit({ nodes: matched, animation: { duration: 1000 } });
+            }
+        }
+
+        function showInfo(id) {
+            const gang = allNodesData.find(n => n.id === id);
+            if (!gang) return;
+            const panel = document.getElementById('nodeInfoPanel');
+            document.getElementById('infoTitle').innerText = gang.properties.name || id;
+            document.getElementById('infoContent').innerHTML = `Affiliation: ${gang.properties.affiliation}<br>Region: ${gang.properties.territory}`;
+            panel.style.display = 'block';
+        }
+
+        function closeInfo() { document.getElementById('nodeInfoPanel').style.display = 'none'; }
+    </script>
+</body>
+</html>

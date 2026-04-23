@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GraphRAG: Noordin Top Terrorist Network Analysis</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #eceff1;
+            --panel-bg: #ffffff;
+            --primary-red: #c0392b;
+            --text-main: #263238;
+        }
+
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg-color); height: 100vh; margin: 0; overflow: hidden; }
+        
+        .container { display: flex; flex-direction: column; height: 100vh; padding: 15px; gap: 15px; box-sizing: border-box; }
+        .panel { background: var(--panel-bg); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; overflow: hidden; border: 1px solid #cfd8dc; }
+
+        /* 상단: 그래프 시각화 (60%) */
+        .upper-panel { flex: 0 0 60%; position: relative; }
+
+        /* 하단: 분석 및 입력 (40%) */
+        .lower-panel { flex: 1; display: flex; flex-direction: row; gap: 15px; min-height: 0; }
+
+        .input-section { flex: 0 0 350px; padding: 20px; display: flex; flex-direction: column; background: var(--panel-bg); border-radius: 12px; border: 1px solid #cfd8dc; }
+        .answer-section { flex: 1; padding: 20px; overflow-y: auto; background: var(--panel-bg); border-radius: 12px; border: 1px solid #cfd8dc; }
+
+        h1 { color: var(--primary-red); margin: 0 0 10px 0; font-size: 18px; border-bottom: 2px solid #f4f4f4; padding-bottom: 8px; }
+        textarea { width: 100%; flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-family: inherit; resize: none; margin-bottom: 10px; font-size: 14px; }
+        button { background: var(--primary-red); color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #e74c3c; }
+
+        #mynetwork { width: 100%; height: 100%; background: #fafafa; }
+        
+        /* 엣지 관계 유형 범례 (Rel Types) */
+        .legend { 
+            position: absolute; top: 15px; right: 15px; background: rgba(255,255,255,0.95); 
+            padding: 12px; border-radius: 8px; border: 1px solid #bdc3c7; font-size: 16px; z-index: 10;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 5px 15px; /* 2열 배치 */
+        }
+        .legend strong { grid-column: span 2; font-size: 16px; margin-bottom: 5px; color: #2c3e50; border-bottom: 1px solid #eee; }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .line-box { width: 20px; height: 3px; border-radius: 2px; }
+
+        .node-info-panel { position: absolute; bottom: 15px; left: 15px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: none; z-index: 20; max-width: 220px; font-size: 16px; border-left: 5px solid var(--primary-red); }
+
+        #answer { font-size: 14px; line-height: 1.7; color: var(--text-main); }
+        #debugInfo { margin-top: 10px; font-size: 11px; color: #78909c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="upper-panel panel">
+            <div id="mynetwork"></div>
+            <!-- 관계 유형 범례 -->
+            <div class="legend" id="relLegend">
+                <strong>Relationship Types</strong>
+                <!-- JS에서 자동 생성됨 -->
+            </div>
+            <div class="node-info-panel" id="nodeInfoPanel">
+                <strong id="infoTitle" style="font-size:14px;"></strong>
+                <div id="infoContent" style="margin-top:5px;"></div>
+            </div>
+        </div>
+
+        <div class="lower-panel">
+            <div class="input-section">
+                <h1>🔍 Intelligence Query</h1>
+                <p style="font-size: 12px; color: #7f8c8d; margin-bottom: 10px;">누르딘 탑 테러 네트워크를 분석합니다.</p>
+                <textarea id="question" placeholder="예: Noordin Top과 직접 연결된 핵심 인물들을 분석해줘..."></textarea>
+                <button onclick="askQuestion()">GraphRAG 분석 실행</button>
+                <div id="debugInfo" style="display: none;">Found Entities: <span id="debugMatched"></span></div>
+            </div>
+
+            <div class="answer-section">
+                <h1>📄 Analysis Report</h1>
+                <div id="answer">질문을 입력하면 지식 그래프의 구조적 문맥을 바탕으로 AI가 분석 보고서를 생성합니다.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let network = null;
+        let nodes = null;
+        let edges = null;
+        let allNodesData = [];
+
+        // 관계 유형별 색상 매핑 (논문용 고대비 색상)
+        const relColors = {
+            'kinship': '#d32f2f',       // 혈연: 진한 빨강 (가장 강력)
+            'co-trained': '#f57c00',    // 공동훈련: 주황
+            'co-operation': '#388e3c',   // 협력: 초록
+            'communicate': '#1976d2',    // 통신: 파랑
+            'classmates': '#7b1fa2',     // 동기: 보라
+            'friendship': '#0097a7',     // 우정: 청록
+            'co-meeting': '#afb42b',     // 회합: 라임
+            'business': '#5d4037',       // 비즈니스: 갈색
+            'soulmate': '#c2185b',       // 단짝: 핑크
+            'co-location': '#616161',    // 장소공유: 회색
+            'default': '#cfd8dc'
+        };
+
+        // 범례 자동 생성
+        function createLegend() {
+            const legendDiv = document.getElementById('relLegend');
+            Object.keys(relColors).forEach(type => {
+                if (type === 'default') return;
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `<div class="line-box" style="background:${relColors[type]}"></div><span>${type}</span>`;
+                legendDiv.appendChild(item);
+            });
+        }
+
+        window.onload = async function() {
+            createLegend();
+            await initGraph();
+        };
+
+        async function initGraph() {
+            try {
+                const res = await fetch('/graph');
+                const data = await res.json();
+                allNodesData = data.nodes;
+
+                const visNodes = data.nodes.map(n => ({
+                    id: n.id,
+                    label: n.properties.name || n.id,
+                    color: { background: '#ffffff', border: '#455a64' },
+                    font: { color: '#263238', size: 14, face: 'Arial' },
+                    shape: 'dot',
+                    size: 18
+                }));
+
+                const visEdges = data.edges.map(e => {
+                    // 관계 타입을 소문자로 변환하여 매칭 (데이터 일관성 확보)
+                    const typeKey = e.relationship.toLowerCase();
+                    const edgeColor = relColors[typeKey] || relColors.default;
+
+                    return {
+                        id: e.id,
+                        from: e.source,
+                        to: e.target,
+                        arrows: 'to',
+                        // 초기 색상 설정 (불투명도 0.3)
+                        color: { color: edgeColor, opacity: 0.3 },
+                        width: 1.5,
+                        title: e.relationship, // 마우스 오버 시 표시
+                        relType: typeKey       // 하이라이트 함수에서 참조할 커스텀 속성
+                    };
+                });
+
+                nodes = new vis.DataSet(visNodes);
+                edges = new vis.DataSet(visEdges);
+
+                const options = {
+                    physics: {
+                        enabled: true,
+                        barnesHut: {
+                            gravitationalConstant: -4000,
+                            centralGravity: 0.3,
+                            springLength: 120,
+                            springConstant: 0.04,
+                            damping: 0.09,
+                            avoidOverlap: 0.1
+                        },
+                        stabilization: { enabled: true, iterations: 1000, updateInterval: 25, fit: true }
+                    },
+                    interaction: { hover: true, dragNodes: true, zoomView: true }
+                };
+
+                network = new vis.Network(document.getElementById('mynetwork'), { nodes, edges }, options);
+                
+                network.on("stabilizationIterationsDone", function () {
+                    network.setOptions({ physics: false });
+                });
+                
+                network.on('click', (params) => params.nodes[0] ? showInfo(params.nodes[0]) : closeInfo());
+            } catch (e) {
+                console.error("Noordin Graph Load Failed:", e);
+            }
+        }
+        async function askQuestion() {
+            const question = document.getElementById('question').value;
+            const answerDiv = document.getElementById('answer');
+            if (!question) return;
+
+            answerDiv.innerHTML = "<p style='color:#7f8c8d;'>네트워크 추론 및 테러리스트 관계망 분석 중...</p>";
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+                const data = await response.json();
+                answerDiv.innerHTML = marked.parse(data.answer);
+
+                if (data.used_nodes) {
+                    highlightNetwork(data.used_nodes);
+                }
+            } catch (error) {
+                answerDiv.innerHTML = "<p style='color:red;'>분석 에러가 발생했습니다.</p>";
+            }
+        }
+
+        function highlightNetwork(usedNodeIds) {
+            if (!nodes || !edges) return;
+
+            const allNodeIds = nodes.getIds();
+            const allEdgeIds = edges.getIds();
+            const matched = usedNodeIds.filter(id => allNodeIds.includes(id));
+
+            document.getElementById('debugInfo').style.display = 'block';
+            document.getElementById('debugMatched').innerText = matched.length + " persons identified";
+
+            // 노드 업데이트
+            const nodeUpdates = allNodeIds.map(id => {
+                const isUsed = matched.includes(id);
+                return {
+                    id: id,
+                    opacity: isUsed ? 0.95 : 0.12,     // ⭐ 완전 불투명 피함
+                    size: isUsed ? 30 : 18,            // ⭐ 과도한 확대 제거
+                    color: isUsed
+                        ? {
+                            background: 'rgba(255, 235, 59, 0.55)',  // soft yellow
+                            border: 'rgba(176, 96, 32, 0.7)'         // muted brown-red
+                        }
+                        : {
+                            background: 'rgba(255, 255, 255, 0.2)',
+                            border: 'rgba(207, 216, 220, 0.4)'
+                        },
+                    font: {
+                        size: isUsed ? 20 : 12,
+                        bold: isUsed,
+                        color: isUsed
+                            ? 'rgba(120, 70, 15, 0.9)'               // 다크 브라운
+                            : 'rgba(176, 190, 197, 0.6)'
+                    },
+                    borderWidth: isUsed ? 2 : 1        // ⭐ 5 → 2
+                };
+            });
+            nodes.update(nodeUpdates);
+
+            // 엣지 업데이트 (범례 색상 유지 로직 추가)
+            const edgeUpdates = allEdgeIds.map(id => {
+                const edge = edges.get(id); // 현재 엣지 데이터 가져오기
+                const isHighlighted = matched.includes(edge.from) && matched.includes(edge.to);
+                
+                // 커스텀 속성 relType을 사용하여 relColors에서 색상 추출
+                const baseColor = relColors[edge.relType] || relColors.default;
+                
+                return {
+                    id: id,
+                    color: { 
+                        color: baseColor, 
+                        opacity: isHighlighted ? 0.7 : 0.08 // 강조되면 불투명도 1, 아니면 0.05
+                    },
+                    width: isHighlighted ? 3 : 1, // 강조되면 굵게
+                    arrows: { 
+                        to: { enabled: true, scaleFactor: 0.6} 
+                    },
+                    smooth: {
+                        enabled: true,
+                        type: "continuous"
+                    }
+                };
+            });
+            edges.update(edgeUpdates);
+
+            if (matched.length > 0) {
+                network.fit({ nodes: matched, animation: { duration: 1200, easingFunction: 'easeInOutCubic' } });
+            }
+        }
+
+        function showInfo(id) {
+            const person = allNodesData.find(n => n.id === id);
+            if (!person) return;
+            const panel = document.getElementById('nodeInfoPanel');
+            document.getElementById('infoTitle').innerText = person.properties.name || id;
+            
+            // 누르딘 데이터 속성에 따른 표시 (Group, Nationality, Role 등)
+            let propsHtml = "";
+            for (let [key, val] of Object.entries(person.properties)) {
+                if (key !== 'embedding' && key !== 'name') {
+                    propsHtml += `<b>${key}:</b> ${val}<br>`;
+                }
+            }
+            document.getElementById('infoContent').innerHTML = propsHtml;
+            panel.style.display = 'block';
+        }
+
+        function closeInfo() { document.getElementById('nodeInfoPanel').style.display = 'none'; }
+    </script>
+</body>
+</html>
