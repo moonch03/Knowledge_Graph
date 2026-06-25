@@ -1,4 +1,4 @@
-# 노르딘 탑 테러 네트워크 (Noordin Top) 분석 보고서
+# Noordin Top 테러 네트워크 (Noordin Top) 분석 보고서
 
 ### Q1. Noordin Top에게 가장 크게 영향력을 미칠 수 있는 인물은 그리고 그 구체적인 이유를 분석해줘
 
